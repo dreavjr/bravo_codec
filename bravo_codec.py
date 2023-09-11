@@ -35,15 +35,62 @@ Notes
 - The confidence_array compression is lossy, but the loss is controlled by the
   quantization parameters. Use the default values for the BRAVO Challenge.
 """
+from collections import Counter
 import struct
-import zlib
 from typing import Tuple, Union
+import zlib
 
 import numpy as np
+
+from rle import run_length_encode2, run_length_decode2
+from huffman import huffman_compute_code, huffman_make_canonical, huffman_encode_canonical, huffman_decode_canonical, \
+                    huffman_encode_data, huffman_decode_data
+
 
 HEADER_FORMAT = "<4sIII?III"
 HEADER_MAGIC = b"BV23"
 COMPRESS_LEVEL = 9 # Compression level for zlib, from 1 to 9, -1 for default
+
+
+def _compress(data:bytes) -> bytes:
+    # Technique 1: zlib compression
+    data = zlib.compress(data, level=COMPRESS_LEVEL)
+    return data
+
+    # Technique 2: run-length encoding
+    # data = run_length_encode2(data)
+    # return data
+
+    # Technique 3: run-length encoding + huffman encoding
+    # freqs = Counter(data).most_common(256)
+    # symbols = np.arange(256, dtype=np.uint8)
+    # huffman_table = huffman_compute_code(freqs)
+    # huffman_table = huffman_make_canonical(huffman_table)
+    # assert len(huffman_table) == 256
+    # data = huffman_encode_data(data, huffman_table)
+    # huffman_table = huffman_encode_canonical(huffman_table, symbols)
+    # huffman_table = bytes(huffman_table)
+    # return huffman_table + data
+
+def _decompress(data:bytes) -> bytes:
+    # Technique 1: zlib compression
+    data = zlib.decompress(data)
+    return data
+
+    # Technique 2: run-length encoding
+    # data = run_length_decode2(data)
+    # return data
+
+    # Technique 3: run-length encoding + huffman encoding
+    # huffman_table = data[:256]
+    # symbols = np.arange(256, dtype=np.uint8)
+    # huffman_table = huffman_decode_canonical(huffman_table, symbols)
+    # data = data[256:]
+    # data = huffman_decode_data(data, huffman_table)
+    # data = bytes(data)
+    # data = run_length_decode2(data)
+    # return data
+
 
 def bravo_encode(class_array:np.ndarray[np.uint8],
                   confidence_array:Union[np.ndarray[np.floating],np.ndarray[np.uint8]],
@@ -122,7 +169,7 @@ def bravo_encode(class_array:np.ndarray[np.uint8],
     class_bytes = class_array.tobytes()
     confidence_bytes = confidence_diff.tobytes()
     data = class_bytes + confidence_bytes
-    data = zlib.compress(data, level=COMPRESS_LEVEL)
+    data = _compress(data)
 
     # Assembles the header with struct
     header = struct.pack(
@@ -177,7 +224,7 @@ def bravo_decode(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarray
         raise ValueError("CRC32 check failed")
 
     # Decompress the class and confidence arrays
-    data = zlib.decompress(encoded_bytes[header_size:-4])
+    data = _decompress(encoded_bytes[header_size:-4])
     if len(data) != class_len + confidence_len:
         raise ValueError("Invalid lengths in header")
     class_bytes = data[:class_len]
