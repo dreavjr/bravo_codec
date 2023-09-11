@@ -41,12 +41,12 @@ from typing import Tuple
 
 import numpy as np
 
-HEADER_FORMAT = "<4sHHB?BII"
+HEADER_FORMAT = "<4sIII?III"
 HEADER_MAGIC = b"BV23"
 
 def bravo_encoder(class_array:np.ndarray[np.uint8],
                   confidence_array:np.ndarray[np.floating],
-                  quantize_bits:int=7,
+                  quantize_levels:int=100,
                   quantize_linear:bool=True,
                   quantize_n_classes:int=19) -> bytes:
     """
@@ -58,8 +58,8 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
         Array with class labels. Must be 2D.
     confidence_array : np.ndarray[np.floating]
         Array with confidence values for the chosen class. Must be 2D.
-    quantize_bits : int, optional
-        Number of bits to quantize confidence values to, by default 8
+    quantize_levels : int, optional
+        Number of levels to quantize confidence values to, by default 100
     quantize_linear : bool, optional
         If True, quantize confidence values linearly, otherwise quantize on a logit scale, by default False
     quantize_n_classes : int, optional
@@ -89,8 +89,8 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
 
     image_shape = class_array.shape
 
-    if quantize_bits < 1 or quantize_bits > 8:
-        raise ValueError("quantize_bits must be between 1 and 8")
+    if quantize_levels < 2 or quantize_levels > 256:
+        raise ValueError("quantize_levels must be between 2 and 256")
 
     # Linearizes both arrays
     class_array = class_array.ravel()
@@ -105,7 +105,7 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
                 ((1. / quantize_n_classes) / (1. - 1. / quantize_n_classes))
             )
     # Quantizes linearly
-    confidence_array = (confidence_array * (2**quantize_bits - 1)).astype(np.uint8)
+    confidence_array = (confidence_array * quantize_levels).round().astype(np.int16)
 
     # Computes the signed difference between consecutive values
     confidence_diff = np.diff(confidence_array.astype(np.int16)).astype(np.int8)
@@ -122,7 +122,7 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
             HEADER_MAGIC,
             image_shape[0],
             image_shape[1],
-            quantize_bits,
+            quantize_levels,
             quantize_linear,
             confidence_array[0],
             len(class_bytes),
@@ -155,7 +155,7 @@ def bravo_decoder(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarra
     header_size = struct.calcsize(HEADER_FORMAT)
     header_bytes = encoded_bytes[:header_size]
     header = struct.unpack(HEADER_FORMAT, header_bytes)
-    signature, rows, cols, quantize_bits, quantize_linear, first_confidence, class_len, confidence_len = header
+    signature, rows, cols, quantize_levels, quantize_linear, first_confidence, class_len, confidence_len = header
 
     # Check the signature
     if signature != HEADER_MAGIC:
@@ -190,7 +190,7 @@ def bravo_decoder(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarra
         # Convert from logit scale to probability
         raise NotImplementedError("Logit scale not implemented yet")
     else:
-        confidence_array = confidence_array / (2**quantize_bits - 1)
+        confidence_array = confidence_array / quantize_levels
 
     return class_array, confidence_array
 
@@ -220,13 +220,16 @@ def test_bravo_codec(seed=42, array_shape=(100, 200), n_classes=5, n_regions=10)
     confidence_array = confidences[voronoi]
     confidence_array += np.random.normal(0, 0.02, size=confidence_array.shape)
     confidence_array = np.clip(confidence_array, 0., 1.)
+    confidence_array = confidence_array.astype(np.float32)
 
     # Encode the arrays
-    quantize_bits = 7
-    encoded_bytes = bravo_encoder(class_array, confidence_array, quantize_bits=quantize_bits)
+    quantize_levels = 100
+    encoded_bytes = bravo_encoder(class_array, confidence_array, quantize_levels=quantize_levels)
     print("Encoded size:", len(encoded_bytes))
     print("Original size:", class_array.nbytes + confidence_array.nbytes)
-    print("Compression ratio:", (class_array.nbytes + confidence_array.nbytes) / len(encoded_bytes))
+    print("Raw size:", class_array.nbytes + confidence_array.nbytes/4)
+    print("Original/encoded ratio:", (class_array.nbytes + confidence_array.nbytes) / len(encoded_bytes))
+    print("Raw/encoded ratio:", (class_array.nbytes + confidence_array.nbytes/4) / len(encoded_bytes))
 
     # Decode the arrays
     decoded_class_array, decoded_confidence_array = bravo_decoder(encoded_bytes)
@@ -235,8 +238,9 @@ def test_bravo_codec(seed=42, array_shape=(100, 200), n_classes=5, n_regions=10)
     assert np.all(decoded_class_array == class_array), "Class arrays do not match"
 
     # Verify that the decoded confidence array is close to the original within the quantization tolerance
-    tolerance = 1 / (2**quantize_bits - 1)
-    assert np.allclose(decoded_confidence_array, confidence_array, atol=tolerance), "Confidence arrays do not match within tolerance"
+    tolerance = 1 / quantize_levels
+    assert np.allclose(decoded_confidence_array, confidence_array, atol=tolerance), \
+            f"Confidence arrays do not match within tolerance of {tolerance}"
 
     print("All tests passed!")
 
