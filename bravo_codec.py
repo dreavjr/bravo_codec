@@ -43,6 +43,7 @@ import numpy as np
 
 HEADER_FORMAT = "<4sIII?III"
 HEADER_MAGIC = b"BV23"
+COMPRESS_LEVEL = 9 # Compression level for zlib, from 1 to 9, -1 for default
 
 def bravo_encoder(class_array:np.ndarray[np.uint8],
                   confidence_array:np.ndarray[np.floating],
@@ -114,7 +115,7 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
     class_bytes = class_array.tobytes()
     confidence_bytes = confidence_diff.tobytes()
     data = class_bytes + confidence_bytes
-    data = zlib.compress(data)
+    data = zlib.compress(data, level=COMPRESS_LEVEL)
 
     # Assembles the header with struct
     header = struct.pack(
@@ -195,7 +196,7 @@ def bravo_decoder(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarra
     return class_array, confidence_array
 
 
-def test_bravo_codec(seed=42, array_shape=(100, 200), n_classes=5, n_regions=10):
+def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=50):
     np.random.seed(seed)
 
     # Creates a random but "realistic" class array with a Voronoi tessellation
@@ -225,11 +226,24 @@ def test_bravo_codec(seed=42, array_shape=(100, 200), n_classes=5, n_regions=10)
     # Encode the arrays
     quantize_levels = 100
     encoded_bytes = bravo_encoder(class_array, confidence_array, quantize_levels=quantize_levels)
-    print("Encoded size:", len(encoded_bytes))
-    print("Original size:", class_array.nbytes + confidence_array.nbytes)
-    print("Raw size:", class_array.nbytes + confidence_array.nbytes/4)
-    print("Original/encoded ratio:", (class_array.nbytes + confidence_array.nbytes) / len(encoded_bytes))
-    print("Raw/encoded ratio:", (class_array.nbytes + confidence_array.nbytes/4) / len(encoded_bytes))
+
+    # Print the sizes
+    def file_size_fmt(size, suffix="B"):
+        for unit in ("", "Ki", "Mi", "Gi", "Ti"):
+            if abs(size) < 1024.0:
+                return f"{size:3.1f}{unit}B"
+            size /= 1024.0
+        return f"{size:.1f}Pi{suffix}"
+
+    original_size = class_array.nbytes + confidence_array.nbytes
+    raw_size = class_array.nbytes + confidence_array.nbytes/4
+    encoded_size = len(encoded_bytes)
+
+    print("Original size: ", original_size, file_size_fmt(original_size))
+    print("Raw size: ", raw_size, file_size_fmt(raw_size))
+    print("Encoded size:", encoded_size, file_size_fmt(encoded_size))
+    print("Original/encoded ratio:", original_size / encoded_size)
+    print("Raw/encoded ratio:", raw_size / encoded_size)
 
     # Decode the arrays
     decoded_class_array, decoded_confidence_array = bravo_decoder(encoded_bytes)
