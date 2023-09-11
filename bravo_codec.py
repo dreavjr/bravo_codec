@@ -115,7 +115,8 @@ def bravo_encode(class_array:np.ndarray[np.uint8],
         confidence_array = (confidence_array * quantize_levels).round()
 
     # Computes the signed difference between consecutive values
-    confidence_diff = np.diff(confidence_array.astype(np.int16)).astype(np.int8)
+    confidence_array = confidence_array.astype(np.int16)
+    confidence_diff = np.diff(confidence_array).astype(np.int8)
 
     # Compresses both arrays
     class_bytes = class_array.tobytes()
@@ -204,7 +205,7 @@ def bravo_decode(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarray
     return class_array, confidence_array
 
 
-def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=50):
+def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=50, out=None):
     np.random.seed(seed)
 
     # Creates a random but "realistic" class array with a Voronoi tessellation
@@ -247,11 +248,12 @@ def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=
     raw_size = class_array.nbytes + confidence_array.nbytes/4
     encoded_size = len(encoded_bytes)
 
-    print("Original size: ", original_size, file_size_fmt(original_size))
-    print("Raw size: ", raw_size, file_size_fmt(raw_size))
-    print("Encoded size:", encoded_size, file_size_fmt(encoded_size))
-    print("Original/encoded ratio:", original_size / encoded_size)
-    print("Raw/encoded ratio:", raw_size / encoded_size)
+    if out is not None:
+        print("Original size: ", original_size, file_size_fmt(original_size), file=out)
+        print("Raw size: ", raw_size, file_size_fmt(raw_size), file=out)
+        print("Encoded size:", encoded_size, file_size_fmt(encoded_size), file=out)
+        print("Original/encoded ratio:", original_size / encoded_size, file=out)
+        print("Raw/encoded ratio:", raw_size / encoded_size, file=out)
 
     # Decode the arrays
     decoded_class_array, decoded_confidence_array = bravo_decode(encoded_bytes)
@@ -264,8 +266,10 @@ def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=
     assert np.allclose(decoded_confidence_array, confidence_array, atol=tolerance), \
             f"Confidence arrays do not match within tolerance of {tolerance}"
 
-    print("All tests passed!")
+    if out is not None:
+        print("All tests passed!", file=out)
 
 
 if __name__ == "__main__":
-    test_bravo_codec()
+    import sys
+    test_bravo_codec(out=sys.stdout)

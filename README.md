@@ -54,12 +54,12 @@ encoded_bytes = bravo_encode(class_array, confidence_array)
 decoded_class_array, decoded_confidence_array = bravo_decode(encoded_bytes)
 ```
 
-## Testing
+## Benchmarking
 
-To test the Bravo CODEC, you can use the `test_bravo_codec` function.
+You may run a benchmark of the codec, contrasting its performance on real data with a combo of PNG+WebP:
 
-```python
-from bravo_codec import test_bravo_codec
-
-test_bravo_codec(seed=42, array_shape=(100, 200), n_classes=5, n_regions=10)
+```bash
+python benchmark.py
 ```
+
+The benchmark has Pillow as an additional dependency.
