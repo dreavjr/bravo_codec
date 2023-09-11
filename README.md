@@ -33,7 +33,7 @@ Then, navigate to the folder and you're ready to go.
 First, import the required functions:
 
 ```python
-from bravo_codec import bravo_encoder, bravo_decoder
+from bravo_codec import bravo_encode, bravo_decode
 ```
 
 Then, use your segmentation method to get the class array and confidence array.
@@ -45,18 +45,18 @@ class_array, confidence_array = your_segmentation_method(input_image)
 ### Encoding
 
 ```python
-encoded_bytes = bravo_encoder(class_array, confidence_array)
+encoded_bytes = bravo_encode(class_array, confidence_array)
 ```
 
 ### Decoding
 
 ```python
-decoded_class_array, decoded_confidence_array = bravo_decoder(encoded_bytes)
+decoded_class_array, decoded_confidence_array = bravo_decode(encoded_bytes)
 ```
 
 ## Testing
 
-To test the Bravo CODEC, you can use the `test_bravo_codec` function. 
+To test the Bravo CODEC, you can use the `test_bravo_codec` function.
 
 ```python
 from bravo_codec import test_bravo_codec

@@ -5,29 +5,29 @@ This module provides functionalities for compressing and decompressing 2D arrays
 representing segmentation maps with confidence values. The input arrays are
 assumed to be 2D arrays. The scheme is intended to be used on the BRAVO Challenge.
 
-The main functions in this module are `bravo_encoder` and `bravo_decoder`.
+The main functions in this module are `bravo_encode` and `bravo_decode`.
 
 Functions
 ---------
-- `bravo_encoder(class_array, confidence_array, ...)`
+- `bravo_encode(class_array, confidence_array, ...)`
     Encode a 2D array of class labels and a 2D array of confidence values into
     a compressed byte-string.
 
-- `bravo_decoder(encoded_bytes)`
+- `bravo_decode(encoded_bytes)`
     Decode a BRAVO compressed byte-string back into a 2D array of class labels
     and a 2D array of confidence values.
 
 Usage
 -----
-    from bravo_codec import bravo_encoder, bravo_decoder
+    from bravo_codec import bravo_encode, bravo_decode
 
     class_array, confidence_array = your_segmentation_method(input_image)
 
     # Encoding
-    encoded_bytes = bravo_encoder(class_array, confidence_array)
+    encoded_bytes = bravo_encode(class_array, confidence_array)
 
     # Decoding
-    decoded_class_array, decoded_confidence_array = bravo_decoder(encoded_bytes)
+    decoded_class_array, decoded_confidence_array = bravo_decode(encoded_bytes)
 
 Notes
 -----
@@ -37,7 +37,7 @@ Notes
 """
 import struct
 import zlib
-from typing import Tuple
+from typing import Tuple, Union
 
 import numpy as np
 
@@ -45,8 +45,8 @@ HEADER_FORMAT = "<4sIII?III"
 HEADER_MAGIC = b"BV23"
 COMPRESS_LEVEL = 9 # Compression level for zlib, from 1 to 9, -1 for default
 
-def bravo_encoder(class_array:np.ndarray[np.uint8],
-                  confidence_array:np.ndarray[np.floating],
+def bravo_encode(class_array:np.ndarray[np.uint8],
+                  confidence_array:Union[np.ndarray[np.floating],np.ndarray[np.uint8]],
                   quantize_levels:int=100,
                   quantize_linear:bool=True,
                   quantize_n_classes:int=19) -> bytes:
@@ -57,10 +57,11 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
     ----------
     class_array : np.ndarray[np.uint8]
         Array with class labels. Must be 2D.
-    confidence_array : np.ndarray[np.floating]
+    confidence_array : np.ndarray[np.floating] or np.ndarray[np.uint8]
         Array with confidence values for the chosen class. Must be 2D.
     quantize_levels : int, optional
-        Number of levels to quantize confidence values to, by default 100
+        Number of levels to quantize confidence values to, by default 100. If quantize_levels == 0, confidence_array
+        is assumed to be pre-quantized and of type np.uint8
     quantize_linear : bool, optional
         If True, quantize confidence values linearly, otherwise quantize on a logit scale, by default False
     quantize_n_classes : int, optional
@@ -81,32 +82,37 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
         raise ValueError("confidence_array must be 2D")
     if class_array.shape != confidence_array.shape:
         raise ValueError("class_array and confidence_array must have the same shape")
-    if quantize_linear:
-        if np.max(confidence_array) > 1. or np.min(confidence_array) < 0.:
-            raise ValueError("confidence values must be between 0 and 1 (inclusive)")
-    else:
-        if np.max(confidence_array) >= 1. or np.min(confidence_array) <= 0.:
-            raise ValueError("confidence values must be between 0 and 1 (exclusive)")
 
     image_shape = class_array.shape
 
-    if quantize_levels < 2 or quantize_levels > 256:
-        raise ValueError("quantize_levels must be between 2 and 256")
+    if confidence_array.dtype == np.uint8:
+        if quantize_levels != 0:
+            raise ValueError("quantize_levels must be 0 if confidence_array.dtype == np.uint8")
+    else:
+        if quantize_levels < 2 or quantize_levels > 256:
+            raise ValueError("quantize_levels must be between 2 and 256 ")
+        if quantize_linear:
+            if np.max(confidence_array) > 1. or np.min(confidence_array) < 0.:
+                raise ValueError("confidence values must be between 0 and 1 (inclusive)")
+        else:
+            if np.max(confidence_array) >= 1. or np.min(confidence_array) <= 0.:
+                raise ValueError("confidence values must be between 0 and 1 (exclusive)")
 
     # Linearizes both arrays
     class_array = class_array.ravel()
     confidence_array = confidence_array.ravel()
 
-    # Linearizes confidence array
-    if not quantize_linear:
-        # Converts to logit scale, adjusting for number of classes
-        # Log( (p/(1-p)) / ((1/n)/(1-1/n)) )
-        confidence_array = np.log2(
-                (confidence_array / (1. - confidence_array)) /
-                ((1. / quantize_n_classes) / (1. - 1. / quantize_n_classes))
-            )
-    # Quantizes linearly
-    confidence_array = (confidence_array * quantize_levels).round().astype(np.int16)
+    if quantize_levels > 0:
+        # Linearizes confidence array
+        if not quantize_linear:
+            # Converts to logit scale, adjusting for number of classes
+            # Log( (p/(1-p)) / ((1/n)/(1-1/n)) )
+            confidence_array = np.log2(
+                    (confidence_array / (1. - confidence_array)) /
+                    ((1. / quantize_n_classes) / (1. - 1. / quantize_n_classes))
+                )
+        # ...quantizes linearly
+        confidence_array = (confidence_array * quantize_levels).round()
 
     # Computes the signed difference between consecutive values
     confidence_diff = np.diff(confidence_array.astype(np.int16)).astype(np.int8)
@@ -137,7 +143,7 @@ def bravo_encoder(class_array:np.ndarray[np.uint8],
     return data + struct.pack("<I", crc32)
 
 
-def bravo_decoder(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarray[np.float32]]:
+def bravo_decode(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarray]:
     """
     Decode a BRAVO compressed byte-string into a class array and confidence array.
 
@@ -148,8 +154,9 @@ def bravo_decoder(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarra
 
     Returns
     -------
-    tuple of np.ndarray[np.uint8] and np.ndarray[np.float32]
-        A tuple containing the class array and confidence array.
+    tuple of np.ndarray[np.uint8] and np.ndarray
+        A tuple containing the class array and confidence array. The confidence array is restored to np.float32 if
+        the original value of quantize_levels > 0, or kept at np.uint8 otherwise.
     """
 
     # Parse the header
@@ -191,7 +198,8 @@ def bravo_decoder(encoded_bytes: bytes) -> Tuple[np.ndarray[np.uint8], np.ndarra
         # Convert from logit scale to probability
         raise NotImplementedError("Logit scale not implemented yet")
     else:
-        confidence_array = confidence_array / quantize_levels
+        if quantize_levels > 0:
+            confidence_array = confidence_array / quantize_levels
 
     return class_array, confidence_array
 
@@ -225,7 +233,7 @@ def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=
 
     # Encode the arrays
     quantize_levels = 100
-    encoded_bytes = bravo_encoder(class_array, confidence_array, quantize_levels=quantize_levels)
+    encoded_bytes = bravo_encode(class_array, confidence_array, quantize_levels=quantize_levels)
 
     # Print the sizes
     def file_size_fmt(size, suffix="B"):
@@ -246,7 +254,7 @@ def test_bravo_codec(seed=42, array_shape=(1000, 2000), n_classes=19, n_regions=
     print("Raw/encoded ratio:", raw_size / encoded_size)
 
     # Decode the arrays
-    decoded_class_array, decoded_confidence_array = bravo_decoder(encoded_bytes)
+    decoded_class_array, decoded_confidence_array = bravo_decode(encoded_bytes)
 
     # Verify that the decoded class array matches the original
     assert np.all(decoded_class_array == class_array), "Class arrays do not match"
